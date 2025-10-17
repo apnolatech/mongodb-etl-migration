@@ -9,9 +9,9 @@ Professional ETL (Extract, Transform, Load) system for migrating data from Mongo
 - **Intelligent Batch Processing:** Dynamic batch sizing with automatic retry for failed batches
 - **Foreign Key Resolution:** Automatic mapping of MongoDB ObjectIds to relational IDs
 - **Encryption Migration:** Supports re-encryption of sensitive data (Salsa20 to AES-256-CBC)
-- **Comprehensive Validation:** 12 validation checks covering 100% of migrated tables
+- **Comprehensive Validation:** 12 validation checks covering all migrated tables
 - **Comprehensive Logging:** Auto-managed logs with detailed metrics
-- **Production Ready:** Handles 50K+ records with 99.98% success rate
+- **Production Ready:** Robust and reliable data migration
 
 ## Quick Start
 
@@ -193,8 +193,6 @@ Failed Cassandra batches are automatically retried individually:
 Batch too large → Save records → Retry individually → 100% success
 ```
 
-**Result:** 39,432/39,432 messages loaded successfully
-
 ### 2. Triple-Layer ObjectId Protection
 
 Prevents ObjectId errors through multiple conversion layers:
@@ -259,28 +257,11 @@ python scripts/validate_migration.py
 12. **Cross-Database Consistency** - Ensures data integrity across databases
 
 **Coverage:**
-- ✅ 12 PostgreSQL tables (100%)
-- ✅ 11 Cassandra tables (100%)
-- ✅ 15 foreign key relationships
+- ✅ All PostgreSQL tables
+- ✅ All Cassandra tables
+- ✅ All foreign key relationships
 - ✅ All data transformations
 - ✅ All file URL replacements
-
-## Performance
-
-### Throughput
-
-- **Overall:** ~1,200 records/second
-- **PostgreSQL COPY:** ~2,800 records/second
-- **Cassandra Batch:** ~1,850 records/second (with retry)
-- **Total Dataset:** 54K records in ~44 seconds
-
-### Scalability
-
-Tested with:
-- 40K+ messages with large content
-- 4.5K+ room memberships
-- Complex foreign key relationships
-- Encrypted data migration
 
 ## Architecture
 
@@ -304,19 +285,6 @@ Tested with:
 - **Factory Pattern:** Database connection management
 - **Template Method:** ETL workflow in base classes
 - **Singleton:** Database connection instances
-
-## Testing
-
-```bash
-# Run all tests
-pytest
-
-# Run with coverage
-pytest --cov=etl --cov-report=html
-
-# Run specific test file
-pytest tests/test_transformers.py
-```
 
 ## Troubleshooting
 
@@ -354,22 +322,22 @@ The system currently migrates 15 MongoDB collections to 23 target tables:
 
 ### Reference Data (PostgreSQL & Cassandra)
 - **role** - User roles (dual destination)
-- **province** - 24 provinces (PostgreSQL)
-- **municipality** - 342 municipalities (PostgreSQL)
-- **parroquia** - 1,151 parishes (PostgreSQL)
+- **province** - Provinces (PostgreSQL)
+- **municipality** - Municipalities (PostgreSQL)
+- **parroquia** - Parishes (PostgreSQL)
 - **profession** - Professional categories (PostgreSQL)
 - **entities** - Organizations/entities (PostgreSQL)
 
 ### User Data (PostgreSQL & Cassandra)
-- **user** - 381 users (dual destination)
+- **user** - Users (dual destination)
 - **channel** - Communication channels (PostgreSQL)
-- **docs** - 4,598 documents (PostgreSQL)
+- **docs** - Documents (PostgreSQL)
 - **live** - Live streams (PostgreSQL)
 
 ### Chat Data (Cassandra Only)
-- **room_details** - 1,930 chat rooms
-- **messages_by_room** - 39,432 messages
-- **participants_by_room** - 4,476 room members
+- **room_details** - Chat rooms
+- **messages_by_room** - Messages
+- **participants_by_room** - Room members
 - **organizations** - Admin rooms
 
 ### Lookup Tables (Cassandra)
@@ -435,61 +403,6 @@ cat etl/logs/etl_metrics_*.json | python -m json.tool
 python scripts/validate_migration.py
 ```
 
-## Contributing
-
-### Code Standards
-
-- Follow PEP 8 style guide
-- Add docstrings to all functions
-- Include type hints
-- Write unit tests for new features
-- Update documentation
-
-### Adding New Entities
-
-1. Add mapping to `etl/config/settings.py`
-2. Add field mappings to `etl/transformers/field_mapper.py`
-3. Add custom transformations (if needed) to `etl/transformers/data_transformer.py`
-4. Update tests
-5. Run migration
-
-## Maintenance
-
-### Regular Tasks
-
-- Review migration logs after each run
-- Validate record counts periodically
-- Update dependencies monthly
-- Archive important logs
-
-### Log Cleanup
-
-Logs are automatically cleaned before each run. Manual cleanup:
-
-```bash
-rm -f etl/logs/*.log etl/logs/*.json
-```
-
-## Version History
-
-### v1.0.1 (2025-10-17)
-
-- Enhanced validation system with 12 comprehensive checks
-- Improved documentation with complete table coverage
-- 100% validation coverage for all migrated tables
-- Detailed entity breakdown (15 collections → 23 tables)
-
-### v1.0.0 (2025-10-16)
-
-- Initial production release
-- 15 MongoDB collections migrated to 23 target tables
-- Automatic schema management
-- Batch retry system
-- Triple-layer ObjectId protection
-- Clean log management
-- 99.98% success rate
-- Dual-destination support (PostgreSQL + Cassandra)
-
 ## License
 
 Private project - All rights reserved by Venqis-NolaTech
@@ -497,10 +410,3 @@ Private project - All rights reserved by Venqis-NolaTech
 ## Authors
 
 Venqis-NolaTech Team
-
----
-
-**Last Updated:** 2025-10-17  
-**Version:** 1.0.1  
-**Status:** Production Ready  
-**Validation Coverage:** 100%
