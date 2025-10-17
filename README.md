@@ -34,28 +34,6 @@ cp .env.example .env
 python run_etl.py
 ```
 
-## Migration Overview
-
-| MongoDB Collection | PostgreSQL Table | Cassandra Table(s) | Records | Strategy |
-|-------------------|------------------|-------------------|---------|----------|
-| roles | role | role | - | Dual |
-| province | province | - | 24 | PostgreSQL |
-| municipality | municipality | - | 342 | PostgreSQL |
-| parroquia | parroquia | - | 1,151 | PostgreSQL |
-| professions | profession | - | - | PostgreSQL |
-| entities | entities | - | - | PostgreSQL |
-| users | user | users | 381 | Dual |
-| channel | channel | - | - | PostgreSQL |
-| docs | docs | - | 4,598 | PostgreSQL |
-| live | live | - | - | PostgreSQL |
-| rooms | - | room_details, organizations, rooms_by_mongo, p2p_room_by_users | 1,930 | Cassandra |
-| messages | - | messages_by_room, room_by_message | 39,432 | Cassandra |
-| roommembers | - | participants_by_room, rooms_by_user, room_membership_lookup | 4,476 | Cassandra |
-| users.profession | profession_user | - | - | PostgreSQL |
-| users.entities | entities_user | - | - | PostgreSQL |
-
-**Total:** 15 MongoDB collections → 12 PostgreSQL tables + 11 Cassandra tables (23 total)
-
 ## Project Structure
 
 ```
@@ -214,43 +192,6 @@ The migration respects foreign key dependencies:
 5. **Content** (channel, docs, live - depend on users)
 6. **Chat data** (rooms → messages → members)
 7. **Relationships** (many-to-many tables)
-
-## Migration Results
-
-Latest migration (2025-10-16):
-
-| Metric | Value |
-|--------|-------|
-| **Duration** | 44.30 seconds |
-| **Records Migrated** | 53,468 / 53,478 (99.98%) |
-| **PostgreSQL** | 7,173 records |
-| **Cassandra** | 46,295 records |
-| **Success Rate** | 99.4% |
-
-### Entities Migrated
-
-**PostgreSQL (12 tables):**
-- ✅ role, province, municipality, parroquia
-- ✅ profession, entities
-- ✅ user, channel, docs, live
-- ✅ profession_user, entities_user (many-to-many)
-
-**Cassandra (11 tables):**
-- ✅ role, users, organizations
-- ✅ room_details, messages_by_room, participants_by_room
-- ✅ rooms_by_mongo, rooms_by_user (lookup tables)
-- ✅ p2p_room_by_users, room_by_message, room_membership_lookup (lookup tables)
-
-### Migration Summary
-
-- ✅ 39,432 messages (100%)
-- ✅ 4,598 documents (100%)
-- ✅ 4,476 room members (100%)
-- ✅ 1,930 rooms (100%)
-- ✅ 1,151 parroquias (100%)
-- ✅ 381 users (100%)
-- ✅ 342 municipalities (100%)
-- ✅ 24 provinces (100%)
 
 ## Key Features
 
@@ -573,7 +514,7 @@ rm -f etl/logs/*.log etl/logs/*.json
 
 ## License
 
-[Add your license here]
+Private project - All rights reserved by Venqis-NolaTech
 
 ## Support
 
@@ -586,7 +527,7 @@ For detailed documentation, see:
 
 ## Authors
 
-[Add authors/contributors here]
+Venqis-NolaTech Team
 
 ---
 
