@@ -288,19 +288,35 @@ python scripts/validate_migration.py
 
 ## Troubleshooting
 
-### Common Issues
+#### MongoDB Connection Issues
 
-**Issue:** MongoDB connection fails  
-**Solution:** Check `MONGODB_URI` format and `authSource` parameter
+If connection fails, verify:
+- `MONGODB_URI` format: `mongodb://user:pass@host:port/database?authSource=admin`
+- Network access to MongoDB server
+- Authentication credentials
 
-**Issue:** Batch too large errors  
-**Solution:** Already handled! Auto-retry system will process individually
+#### Automatic Error Handling
 
-**Issue:** Foreign key not found  
-**Solution:** Check entity processing order in `settings.py`
+The ETL handles these automatically:
+- ✅ **Batch too large errors**: Auto-retry with smaller batches
+- ✅ **ObjectId conversion**: Triple-layer validation and conversion
+- ✅ **Connection timeouts**: Automatic reconnection
+- ✅ **Cassandra pool shutdown**: Graceful error handling
 
-**Issue:** ObjectId errors  
-**Solution:** Already handled! Triple-layer conversion system
+#### Foreign Key Errors
+
+If you get "foreign key not found" errors:
+1. Check entity processing order in `settings.py` (order field)
+2. Verify parent entities are migrated before children
+3. Example: `province` → `municipality` → `parroquia`
+
+#### Performance Issues
+
+If migration is slow:
+- Adjust `BATCH_SIZE` in `.env` (default: 1000)
+- Check network latency to Cassandra/PostgreSQL
+- Monitor database resources (CPU, memory)
+- Consider running during off-peak hours
 
 ## Dependencies
 
