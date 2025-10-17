@@ -803,9 +803,9 @@ class DataTransformer(BaseTransformer):
         - isPrivate is properly mapped from isPublic
         - Only migrate active docs (isActive != false)
         - specialRole logic:
-          * If specialRole exists → isPrivate=true (forced)
-          * If specialRole NOT exists → isPrivate=false
-          * specialRole mongo_id → role_id in PostgreSQL
+          * If specialRole exists, isPrivate=true (forced)
+          * If specialRole NOT exists, isPrivate=false
+          * specialRole mongo_id resolves to role_id in PostgreSQL
           * Store in docs_roles table (handled in orchestrator)
         """
         if destination == 'postgres' and self.pg_id_mapper:

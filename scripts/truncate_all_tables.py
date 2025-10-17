@@ -21,7 +21,7 @@ def truncate_postgresql():
     logger.info("TRUNCATING POSTGRESQL TABLES")
     logger.info("=" * 80)
     
-    # Order: children → parents (reverse of migration order)
+    # Order: children to parents (reverse of migration order)
     tables_in_order = [
         # Many-to-many tables first
         'profession_user', 'entities_user',
@@ -46,7 +46,7 @@ def truncate_postgresql():
                 logger.info(f"  Truncating '{table_name}'...")
                 
                 with conn.get_session() as session:
-                    # RESTART IDENTITY reinicia las secuencias de auto-increment a 1
+                    # RESTART IDENTITY resets auto-increment sequences to 1
                     session.execute(text(f'TRUNCATE TABLE "{table_name}" RESTART IDENTITY CASCADE'))
                 
                 logger.info(f"    SUCCESS: '{table_name}' truncated (ID sequences restarted)")
@@ -77,7 +77,7 @@ def truncate_cassandra():
     logger.info("TRUNCATING CASSANDRA TABLES")
     logger.info("=" * 80)
     
-    # Order: children → parents
+    # Order: children to parents
     tables_in_order = [
         # Lookup tables (depend on messages, rooms, users)
         'room_by_message',

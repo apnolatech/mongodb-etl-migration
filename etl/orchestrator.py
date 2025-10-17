@@ -687,7 +687,7 @@ class ETLOrchestrator:
         """Truncates PostgreSQL tables in dependency order"""
         logger.info("Truncating PostgreSQL tables...")
         
-        # Order: children → parents (reverse dependency order)
+        # Order: children to parents (reverse dependency order)
         tables = [
             'profession_user', 'entities_user',  # Many-to-many
             'live', 'docs',  # Depend on channel/user
@@ -700,7 +700,7 @@ class ETLOrchestrator:
             try:
                 with self.db_manager.postgres.get_session() as session:
                     from sqlalchemy import text
-                    # RESTART IDENTITY reinicia las secuencias de auto-increment a 1
+                    # RESTART IDENTITY resets auto-increment sequences to 1
                     session.execute(text(f'TRUNCATE TABLE "{table}" RESTART IDENTITY CASCADE'))
                 logger.info(f"  SUCCESS: Truncated '{table}' (ID sequences restarted)")
             except Exception as e:
@@ -711,7 +711,7 @@ class ETLOrchestrator:
         """Truncates Cassandra tables in dependency order"""
         logger.info("Truncating Cassandra tables...")
         
-        # Order: children → parents
+        # Order: children to parents
         tables = [
             # Lookup tables (depend on messages, rooms, users)
             'room_by_message',
@@ -888,7 +888,7 @@ class ETLOrchestrator:
         
         metrics.records_transformed += len(folder_records)
         metrics.records_loaded_postgres += len(folder_records)
-        logger.info(f"✓ Phase 1 complete: {len(folder_records)} folders migrated")
+        logger.info(f"Phase 1 complete: {len(folder_records)} folders migrated")
         
         # Phase 2: Migrate files
         logger.info("\nPhase 2: Migrating files...")
@@ -956,7 +956,7 @@ class ETLOrchestrator:
         
         metrics.records_transformed += len(file_records)
         
-        logger.info(f"✓ Phase 2 complete: {len(file_records)} files migrated")
+        logger.info(f"Phase 2 complete: {len(file_records)} files migrated")
         
         # Phase 3: Insert docs_roles relations
         all_docs_roles = folder_roles_relations + docs_roles_relations
@@ -980,7 +980,7 @@ class ETLOrchestrator:
             if docs_roles_records:
                 # Load to docs_roles table
                 loaded = self.postgres_loader.load_batch(docs_roles_records, 'docs_roles')
-                logger.info(f"  ✓ Inserted {loaded}/{len(docs_roles_records)} docs_roles relations")
+                logger.info(f"  Inserted {loaded}/{len(docs_roles_records)} docs_roles relations")
             else:
                 logger.info(f"  No valid docs_roles relations to insert")
         elif all_docs_roles:
@@ -988,7 +988,7 @@ class ETLOrchestrator:
         
         metrics.finish()
         
-        logger.info(f"\n✓ Docs migration completed:")
+        logger.info(f"\nDocs migration completed:")
         logger.info(f"  Total extracted: {metrics.records_extracted:,}")
         logger.info(f"  Folders migrated: {len(folder_records):,}")
         logger.info(f"  Files migrated: {len(file_records):,}")
@@ -1220,13 +1220,13 @@ class ETLOrchestrator:
             success_count = sum(1 for success, _ in results if success)
             error_count = sum(1 for success, _ in results if not success)
             
-            logger.info(f"  ✓ p2p_room_by_users populated: {success_count:,}/{len(all_inserts):,} entries inserted (2 per room)")
+            logger.info(f"  p2p_room_by_users populated: {success_count:,}/{len(all_inserts):,} entries inserted (2 per room)")
             if error_count > 0:
-                logger.warning(f"  ⚠ Errors: {error_count:,}")
+                logger.warning(f"  Errors: {error_count:,}")
             if rooms_without_participants > 0:
-                logger.info(f"  ⚠ Rooms without participants: {rooms_without_participants:,}")
+                logger.info(f"  Rooms without participants: {rooms_without_participants:,}")
             if rooms_with_wrong_count > 0:
-                logger.info(f"  ⚠ Rooms with non-standard participant count: {rooms_with_wrong_count:,}")
+                logger.info(f"  Rooms with non-standard participant count: {rooms_with_wrong_count:,}")
             
         except Exception as e:
             logger.error(f"Error populating p2p_room_by_users: {e}")
@@ -1396,11 +1396,11 @@ class ETLOrchestrator:
             success_count = sum(1 for success, _ in results if success)
             error_count = sum(1 for success, _ in results if not success)
             
-            logger.info(f"  ✓ rooms_by_user populated: {success_count:,}/{len(all_inserts):,} records inserted")
+            logger.info(f"  rooms_by_user populated: {success_count:,}/{len(all_inserts):,} records inserted")
             if error_count > 0:
-                logger.warning(f"  ⚠ Errors: {error_count:,}")
+                logger.warning(f"  Errors: {error_count:,}")
             if skipped_count > 0:
-                logger.warning(f"  ⚠ Skipped (room not found): {skipped_count:,}")
+                logger.warning(f"  Skipped (room not found): {skipped_count:,}")
             
         except Exception as e:
             logger.error(f"Error populating rooms_by_user: {e}")
@@ -1461,9 +1461,9 @@ class ETLOrchestrator:
             success_count = sum(1 for success, _ in results if success)
             error_count = sum(1 for success, _ in results if not success)
             
-            logger.info(f"  ✓ room_membership_lookup updated: {success_count:,}/{len(all_updates):,} records")
+            logger.info(f"  room_membership_lookup updated: {success_count:,}/{len(all_updates):,} records")
             if error_count > 0:
-                logger.warning(f"  ⚠ Errors: {error_count:,}")
+                logger.warning(f"  Errors: {error_count:,}")
             
         except Exception as e:
             logger.error(f"Error updating room_membership_lookup: {e}")

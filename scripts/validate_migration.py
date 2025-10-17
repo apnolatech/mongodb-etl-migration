@@ -1006,7 +1006,7 @@ class MigrationValidator:
                 logger.error(f"  ... and {len(self.errors) - 20} more errors")
         
         if self.warnings:
-            logger.warning("\n[WARN]️  WARNINGS:")
+            logger.warning("\n[WARN] WARNINGS:")
             for warning in self.warnings[:10]:  # Show first 10
                 logger.warning(f"  - {warning}")
             if len(self.warnings) > 10:
@@ -1033,7 +1033,7 @@ class MigrationValidator:
         # Final verdict
         logger.info("\n" + "=" * 80)
         if len(self.errors) == 0:
-            logger.info("✅ SUCCESS: Migration validation PASSED")
+            logger.info("SUCCESS: Migration validation PASSED")
             logger.info("=" * 80)
             return 0
         else:
