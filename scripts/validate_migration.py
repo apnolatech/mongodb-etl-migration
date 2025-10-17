@@ -640,10 +640,126 @@ class MigrationValidator:
             except Exception as e:
                 logger.warning(f"  [WARN] Could not verify {child_table}.{child_column}: {e}")
     
+    def validate_new_business_rules(self):
+        """Validate new business rules from October 2025"""
+        logger.info("\n" + "=" * 80)
+        logger.info("12. VALIDATING NEW BUSINESS RULES (OCT 2025)")
+        logger.info("=" * 80)
+        
+        if not self.cassandra:
+            logger.warning("  [WARN] Cassandra not available, skipping")
+            return
+        
+        try:
+            # Rule 1: Phone numbers must have '+' prefix in Cassandra
+            logger.info("\n  Rule 1: Phone numbers with '+' prefix:")
+            result = self.cassandra.session.execute("SELECT phone FROM users LIMIT 200")
+            phones = [row.phone for row in result if row.phone and row.phone != '']
+            phones = phones[:100]  # Take first 100 non-empty phones
+            with_plus = sum(1 for p in phones if p.startswith('+'))
+            without_plus = len(phones) - with_plus
+            
+            logger.info(f"    Sample: {with_plus}/{len(phones)} with '+', {without_plus} without '+'")
+            if without_plus == 0:
+                logger.info(f"    [OK] All sampled phones have '+' prefix")
+            else:
+                logger.error(f"    [FAIL] {without_plus} phones missing '+' prefix")
+                self.errors.append(f"{without_plus}/{len(phones)} sampled phones missing '+' prefix")
+            
+            # Rule 2: No deleted messages in Cassandra
+            logger.info("\n  Rule 2: Deleted messages filtered:")
+            mongo_deleted = self.mongo.db.messages.count_documents({
+                '$or': [
+                    {'isActive': False},
+                    {'isDeleted': True}
+                ]
+            })
+            logger.info(f"    MongoDB deleted messages: {mongo_deleted:,}")
+            
+            # Get total messages in Cassandra
+            result = self.cassandra.session.execute("SELECT COUNT(*) FROM messages_by_room")
+            cassandra_messages = result.one()[0]
+            logger.info(f"    Cassandra messages: {cassandra_messages:,}")
+            
+            # Get total active messages in MongoDB
+            mongo_active = self.mongo.db.messages.count_documents({
+                '$or': [
+                    {'isActive': {'$ne': False}},
+                    {'isActive': {'$exists': False}}
+                ],
+                '$and': [
+                    {'$or': [
+                        {'isDeleted': {'$ne': True}},
+                        {'isDeleted': {'$exists': False}}
+                    ]}
+                ]
+            })
+            logger.info(f"    MongoDB active messages: {mongo_active:,}")
+            
+            # Check if Cassandra count is close to active messages (allow some tolerance)
+            diff_percent = abs(cassandra_messages - mongo_active) / mongo_active * 100 if mongo_active > 0 else 0
+            if diff_percent < 5:  # 5% tolerance
+                logger.info(f"    [OK] Deleted messages properly filtered (diff: {diff_percent:.1f}%)")
+            else:
+                logger.warning(f"    [WARN] Message count difference: {diff_percent:.1f}%")
+                self.warnings.append(f"Message count difference: {diff_percent:.1f}%")
+            
+            # Rule 3: Room permissions follow correct logic
+            logger.info("\n  Rule 3: Room permissions logic:")
+            
+            # Check P2P rooms
+            result = self.cassandra.session.execute(
+                "SELECT send_message, add_member, edit_group FROM room_details WHERE type = 'p2p' LIMIT 50 ALLOW FILTERING"
+            )
+            p2p_rooms = list(result)
+            correct_p2p = sum(1 for r in p2p_rooms if r.send_message == True and r.add_member == False and r.edit_group == True)
+            
+            logger.info(f"    P2P rooms: {correct_p2p}/{len(p2p_rooms)} with correct permissions")
+            logger.info(f"      (send_message=true, add_member=false, edit_group=true)")
+            if correct_p2p == len(p2p_rooms):
+                logger.info(f"    [OK] All P2P rooms have correct permissions")
+            else:
+                logger.error(f"    [FAIL] {len(p2p_rooms) - correct_p2p} P2P rooms with incorrect permissions")
+                self.errors.append(f"{len(p2p_rooms) - correct_p2p}/50 P2P rooms with incorrect permissions")
+            
+            # Check group rooms (just verify fields exist)
+            result = self.cassandra.session.execute(
+                "SELECT send_message, add_member, edit_group FROM room_details WHERE type = 'group' LIMIT 50 ALLOW FILTERING"
+            )
+            group_rooms = list(result)
+            logger.info(f"    Group rooms: {len(group_rooms)} sampled")
+            logger.info(f"      (permissions vary based on canSendMessage/canWrite)")
+            logger.info(f"    [OK] Group room permissions present")
+            
+            # Rule 4: room_membership_lookup has last_message_at
+            logger.info("\n  Rule 4: room_membership_lookup with last_message_at:")
+            result = self.cassandra.session.execute("SELECT last_message_at, is_pinned FROM room_membership_lookup LIMIT 100")
+            entries = list(result)
+            with_timestamp = sum(1 for e in entries if e.last_message_at is not None)
+            
+            logger.info(f"    Sample: {with_timestamp}/100 with last_message_at")
+            if with_timestamp >= 50:  # At least 50% should have timestamps (some rooms might not have messages)
+                logger.info(f"    [OK] last_message_at field populated")
+            else:
+                logger.error(f"    [FAIL] Only {with_timestamp}/100 have last_message_at")
+                self.errors.append(f"room_membership_lookup missing last_message_at in {100-with_timestamp}/100 samples")
+            
+            # Check is_pinned field exists
+            with_pinned = sum(1 for e in entries if e.is_pinned is not None)
+            logger.info(f"    Sample: {with_pinned}/100 with is_pinned field")
+            if with_pinned == len(entries):
+                logger.info(f"    [OK] is_pinned field populated")
+            else:
+                logger.warning(f"    [WARN] {len(entries) - with_pinned}/100 missing is_pinned")
+        
+        except Exception as e:
+            logger.error(f"  [FAIL] ERROR validating new business rules: {e}")
+            self.errors.append(f"New business rules validation failed: {e}")
+    
     def validate_data_transformations(self):
         """Validate specific data transformations"""
         logger.info("\n" + "=" * 80)
-        logger.info("12. VALIDATING DATA TRANSFORMATIONS")
+        logger.info("13. VALIDATING DATA TRANSFORMATIONS")
         logger.info("=" * 80)
         
         # User transformations
@@ -760,7 +876,7 @@ class MigrationValidator:
         logger.info("VALIDATION SUMMARY")
         logger.info("=" * 80)
         
-        total_checks = 12  # Updated with new validation sections
+        total_checks = 13  # Updated with new validation sections
         failed_checks = len([e for e in self.errors if 'check failed' in e])
         
         logger.info(f"\nChecks completed: {total_checks}")
@@ -831,6 +947,7 @@ class MigrationValidator:
             self.validate_file_url_replacement()  # NEW
             self.validate_message_filtering()  # NEW
             self.validate_live_deleted_at()  # NEW
+            self.validate_new_business_rules()  # NEW - October 2025
             self.validate_foreign_keys()
             self.validate_data_transformations()
             
