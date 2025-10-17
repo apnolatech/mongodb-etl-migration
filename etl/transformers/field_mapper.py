@@ -195,11 +195,15 @@ class FieldMapper:
                 'description': lambda doc: doc.get('description') or '',
                 'fileURL': lambda doc: FieldMapper._replace_gs_bucket((doc.get('fileUrl', {}).get('url') if isinstance(doc.get('fileUrl'), dict) else doc.get('fileUrl')) or (doc.get('fileURL', {}).get('url') if isinstance(doc.get('fileURL'), dict) else doc.get('fileURL')) or ''),
                 'isVisible': lambda doc: doc.get('isVisible', True) if isinstance(doc.get('isVisible'), bool) else True,
-                'isPrivate': lambda doc: not doc.get('isPublic', False) if isinstance(doc.get('isPublic'), bool) else doc.get('isPrivate', False),
-                # onFolder omitted (is string in Mongo but integer in PostgreSQL)
+                # isPrivate will be handled in transformer based on specialRole
+                'isPrivate': lambda doc: doc.get('isPrivate', False),  # Overridden in transformer if specialRole exists
+                # onFolder will be resolved in hierarchical processing (string path -> integer ID)
+                'onFolder': lambda doc: 0,  # Default to 0 (root), resolved in _process_docs_hierarchical
                 'type': lambda doc: doc.get('fileType') or doc.get('type') or 'FILE',  # Default to FILE if no type
                 'uploadedBy': lambda doc: FieldMapper._safe_objectid_to_string(doc.get('uploadedBy')),  # Extract for transformer (convert ObjectId to string)
                 'uploaded_by_id': lambda doc: None,  # Resolved in transformer from user mongo_id
+                # specialRole extraction for transformer
+                'specialRole': lambda doc: FieldMapper._safe_objectid_to_string(doc.get('specialRole')),  # Extract for transformer
                 'size': lambda doc: doc.get('fileSize') or doc.get('size') or 0,
                 'ext': lambda doc: doc.get('ext') or '',
                 'mongo_id': lambda doc: str(doc.get('_id')),

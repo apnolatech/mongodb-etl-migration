@@ -326,5 +326,11 @@ class PostgresLoader(BaseLoader):
             Table name
         """
         mapping = settings.COLLECTION_MAPPINGS.get(entity_name, {})
-        return mapping.get('postgres', '')
+        table_name = mapping.get('postgres', '')
+        
+        # If not in mappings, use entity_name directly (for relationship tables like docs_roles)
+        if not table_name:
+            table_name = entity_name
+        
+        return table_name
 

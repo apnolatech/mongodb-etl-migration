@@ -640,10 +640,125 @@ class MigrationValidator:
             except Exception as e:
                 logger.warning(f"  [WARN] Could not verify {child_table}.{child_column}: {e}")
     
+    def validate_docs_hierarchy(self):
+        """Validate docs hierarchical migration"""
+        logger.info("\n" + "=" * 80)
+        logger.info("12. VALIDATING DOCS HIERARCHICAL MIGRATION")
+        logger.info("=" * 80)
+        
+        try:
+            with self.postgres.get_session() as session:
+                # Check total counts
+                result = session.execute(text('SELECT COUNT(*) FROM docs'))
+                total_pg = result.fetchone()[0]
+                
+                # Count by type
+                result = session.execute(text('SELECT type, COUNT(*) FROM docs GROUP BY type'))
+                types = {row[0]: row[1] for row in result}
+                
+                logger.info(f"\n  PostgreSQL docs: {total_pg:,}")
+                logger.info(f"    FOLDER: {types.get('FOLDER', 0):,}")
+                logger.info(f"    Other types: {total_pg - types.get('FOLDER', 0):,}")
+                
+                # Validate onFolder field
+                result = session.execute(text('SELECT COUNT(*) FROM docs WHERE "onFolder" IS NULL'))
+                null_folder = result.fetchone()[0]
+                logger.info(f"\n  onFolder validation:")
+                logger.info(f"    {'[OK]' if null_folder == 0 else '[FAIL]'} NULL values: {null_folder}")
+                if null_folder > 0:
+                    self.errors.append(f"{null_folder} docs with NULL onFolder")
+                
+                # Validate onFolder references
+                result = session.execute(text('''
+                    SELECT COUNT(*) FROM docs 
+                    WHERE "onFolder" != 0 
+                    AND NOT EXISTS (
+                        SELECT 1 FROM docs parent 
+                        WHERE parent.id = docs."onFolder"
+                    )
+                '''))
+                orphaned = result.fetchone()[0]
+                logger.info(f"    {'[OK]' if orphaned == 0 else '[FAIL]'} Orphaned folder references: {orphaned}")
+                if orphaned > 0:
+                    self.errors.append(f"{orphaned} docs with invalid onFolder ID")
+                
+                # Validate root folders
+                result = session.execute(text('SELECT COUNT(*) FROM docs WHERE "onFolder" = 0'))
+                root_docs = result.fetchone()[0]
+                logger.info(f"    [OK] Docs at root (onFolder=0): {root_docs}")
+                
+                # Validate isActive filter
+                mongo_active = self.mongo.db.docs.count_documents({'$or': [
+                    {'isActive': {'$ne': False}},
+                    {'isActive': {'$exists': False}}
+                ]})
+                logger.info(f"\n  isActive filter:")
+                logger.info(f"    MongoDB active docs: {mongo_active:,}")
+                logger.info(f"    PostgreSQL docs: {total_pg:,}")
+                
+                diff_percent = abs(total_pg - mongo_active) / mongo_active * 100 if mongo_active > 0 else 0
+                if diff_percent < 10:  # 10% tolerance for docs
+                    logger.info(f"    [OK] Inactive docs filtered (diff: {diff_percent:.1f}%)")
+                else:
+                    logger.warning(f"    [WARN] Count difference: {diff_percent:.1f}%")
+                
+                # Validate isPrivate mapping
+                result = session.execute(text('SELECT COUNT(*) FROM docs WHERE "isPrivate" = true'))
+                private_count = result.fetchone()[0]
+                logger.info(f"\n  isPrivate field:")
+                logger.info(f"    Private docs: {private_count:,}/{total_pg:,}")
+                
+                # Validate specialRole logic (isPrivate should be false if no specialRole)
+                result = session.execute(text('SELECT COUNT(*) FROM docs_roles'))
+                docs_with_roles = result.fetchone()[0]
+                logger.info(f"\n  specialRole validation:")
+                logger.info(f"    docs_roles relations: {docs_with_roles:,}")
+                
+                if docs_with_roles > 0:
+                    # Verify all docs in docs_roles have isPrivate=true
+                    result = session.execute(text('''
+                        SELECT COUNT(*) FROM docs d
+                        INNER JOIN docs_roles dr ON d.id = dr.docs_id
+                        WHERE d."isPrivate" = false
+                    '''))
+                    wrong_privacy = result.fetchone()[0]
+                    
+                    if wrong_privacy == 0:
+                        logger.info(f"    [OK] All docs with specialRole have isPrivate=true")
+                    else:
+                        logger.error(f"    [FAIL] {wrong_privacy} docs with specialRole but isPrivate=false")
+                        self.errors.append(f"{wrong_privacy} docs with specialRole have wrong isPrivate")
+                    
+                    # Verify foreign keys
+                    result = session.execute(text('''
+                        SELECT COUNT(*) FROM docs_roles dr
+                        WHERE NOT EXISTS (SELECT 1 FROM docs d WHERE d.id = dr.docs_id)
+                        OR NOT EXISTS (SELECT 1 FROM role r WHERE r.id = dr.role_id)
+                    '''))
+                    invalid_refs = result.fetchone()[0]
+                    
+                    if invalid_refs == 0:
+                        logger.info(f"    [OK] All docs_roles references are valid")
+                    else:
+                        logger.error(f"    [FAIL] {invalid_refs} invalid foreign key references")
+                        self.errors.append(f"{invalid_refs} invalid docs_roles references")
+                else:
+                    logger.info(f"    [INFO] No docs with specialRole (docs_roles is empty)")
+                    
+                    # All docs should have isPrivate=false if no specialRole
+                    if private_count == 0:
+                        logger.info(f"    [OK] All docs have isPrivate=false (no specialRole)")
+                    else:
+                        logger.info(f"    [INFO] {private_count} docs have isPrivate=true from other sources")
+                
+        except Exception as e:
+            logger.error(f"  [FAIL] ERROR validating docs hierarchy: {e}")
+            self.errors.append(f"Docs hierarchy validation failed: {e}")
+    
     def validate_new_business_rules(self):
         """Validate new business rules from October 2025"""
         logger.info("\n" + "=" * 80)
-        logger.info("12. VALIDATING NEW BUSINESS RULES (OCT 2025)")
+        logger.info("13. VALIDATING NEW BUSINESS RULES (OCT 2025)")
         logger.info("=" * 80)
         
         if not self.cassandra:
@@ -876,7 +991,7 @@ class MigrationValidator:
         logger.info("VALIDATION SUMMARY")
         logger.info("=" * 80)
         
-        total_checks = 13  # Updated with new validation sections
+        total_checks = 14  # Updated with new validation sections
         failed_checks = len([e for e in self.errors if 'check failed' in e])
         
         logger.info(f"\nChecks completed: {total_checks}")
@@ -947,6 +1062,7 @@ class MigrationValidator:
             self.validate_file_url_replacement()  # NEW
             self.validate_message_filtering()  # NEW
             self.validate_live_deleted_at()  # NEW
+            self.validate_docs_hierarchy()  # NEW - Hierarchical docs migration
             self.validate_new_business_rules()  # NEW - October 2025
             self.validate_foreign_keys()
             self.validate_data_transformations()

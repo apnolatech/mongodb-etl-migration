@@ -796,8 +796,25 @@ class DataTransformer(BaseTransformer):
         """
         Docs-specific transformations
         Resolves uploaded_by_id foreign key
+        
+        Business rules:
+        - onFolder is resolved in hierarchical processing (string path -> ID)
+        - Files without folder get onFolder=0 (root)
+        - isPrivate is properly mapped from isPublic
+        - Only migrate active docs (isActive != false)
+        - specialRole logic:
+          * If specialRole exists → isPrivate=true (forced)
+          * If specialRole NOT exists → isPrivate=false
+          * specialRole mongo_id → role_id in PostgreSQL
+          * Store in docs_roles table (handled in orchestrator)
         """
         if destination == 'postgres' and self.pg_id_mapper:
+            # Filter inactive docs
+            is_active = data.get('isActive', True)
+            if is_active is False:
+                logger.debug(f"Skipping inactive doc: {data.get('name')}")
+                return None
+            
             # Resolve uploaded_by_id from uploadedBy user mongo_id
             uploaded_by_mongo_id = data.get('uploadedBy')
             if uploaded_by_mongo_id:
@@ -807,8 +824,31 @@ class DataTransformer(BaseTransformer):
                 if user_id:
                     data['uploaded_by_id'] = user_id
             
-            # Remove temporary field used for lookup
+            # Handle specialRole logic
+            special_role_mongo_id = data.get('specialRole')
+            if special_role_mongo_id:
+                # If specialRole exists, force isPrivate=true
+                data['isPrivate'] = True
+                
+                # Resolve role_id from specialRole mongo_id
+                role_id = self.pg_id_mapper.get_postgres_id('role', str(special_role_mongo_id))
+                if role_id:
+                    # Store for docs_roles table insertion (handled in orchestrator)
+                    data['_special_role_id'] = role_id
+                else:
+                    logger.warning(f"Could not resolve role for specialRole: {special_role_mongo_id}")
+            else:
+                # If NO specialRole, force isPrivate=false
+                data['isPrivate'] = False
+            
+            # Ensure onFolder is set (default to 0 for root, will be resolved in hierarchical processing)
+            if 'onFolder' not in data or data['onFolder'] is None:
+                data['onFolder'] = 0
+            
+            # Remove temporary fields used for lookup
             data.pop('uploadedBy', None)
+            data.pop('isActive', None)
+            data.pop('specialRole', None)
         
         return data
     

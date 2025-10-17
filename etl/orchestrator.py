@@ -236,6 +236,10 @@ class ETLOrchestrator:
             if mapping.get('is_many_to_many'):
                 return self._process_many_to_many(entity_name, entity_metrics)
             
+            # Check if this is docs (hierarchical structure)
+            if entity_name == 'docs' and mapping.get('is_hierarchical'):
+                return self._process_docs_hierarchical(entity_name, entity_metrics)
+            
             strategy = mapping.get('strategy')
             logger.info(f"Strategy: {strategy}")
             
@@ -735,6 +739,265 @@ class ETLOrchestrator:
             except Exception as e:
                 if 'does not exist' not in str(e) and 'unconfigured table' not in str(e):
                     logger.warning(f"  Could not truncate '{table}': {e}")
+    
+    def _process_docs_hierarchical(self, entity_name: str, metrics: EntityMetrics) -> EntityMetrics:
+        """
+        Special processing for docs entity with hierarchical folder structure
+        
+        MongoDB uses string paths for folders (/folder/subfolder) which is terrible
+        but we need to migrate it correctly to PostgreSQL integer IDs
+        
+        Two-phase migration:
+        1. Migrate all FOLDERs in order (sorted by path depth), maintaining path->ID map
+        2. Migrate all FILEs, resolving onFolder string path to PostgreSQL ID
+        
+        Args:
+            entity_name: Should be 'docs'
+            metrics: Entity metrics
+            
+        Returns:
+            Updated metrics
+        """
+        logger.info(f"Type: Hierarchical docs migration (2-phase)")
+        logger.info("Phase 1: Extracting and migrating folders...")
+        
+        # Extract ALL docs
+        all_docs = list(self.extractor.extract('docs', {}))
+        metrics.records_extracted = len(all_docs)
+        logger.info(f"Extracted: {len(all_docs)} total docs")
+        
+        # Separate folders and files
+        folders = [doc for doc in all_docs if doc.get('type') == 'FOLDER' or doc.get('fileType') == 'FOLDER']
+        files = [doc for doc in all_docs if doc not in folders]
+        
+        logger.info(f"  Folders: {len(folders)}")
+        logger.info(f"  Files: {len(files)}")
+        
+        # Sort folders by path depth (shallowest first)
+        # This ensures parent folders are migrated before their children
+        def get_path_depth(doc):
+            folder_path = doc.get('onFolder', '/')
+            # Count slashes, but treat '/' as depth 0
+            if folder_path == '/':
+                return 0
+            return folder_path.count('/')
+        
+        folders.sort(key=get_path_depth)
+        logger.info(f"  Sorted folders by path depth")
+        
+        # Map to store: full_path -> postgres_id
+        # This allows us to resolve onFolder paths to IDs
+        path_to_id_map = {}
+        path_to_id_map['/'] = 0  # Root folder maps to ID 0
+        
+        # Phase 1: Migrate folders by depth level (optimized)
+        logger.info("\nPhase 1: Migrating folders by depth level (optimized)...")
+        folder_records = []
+        folder_roles_relations = []  # Store (mongo_id, role_id) for docs_roles table
+        
+        # Group folders by depth for batch processing
+        folders_by_depth = {}
+        max_depth = 0
+        
+        for folder_doc in folders:
+            depth = get_path_depth(folder_doc)
+            if depth not in folders_by_depth:
+                folders_by_depth[depth] = []
+            folders_by_depth[depth].append(folder_doc)
+            max_depth = max(max_depth, depth)
+        
+        logger.info(f"  Folder depth levels: 0 to {max_depth}")
+        for depth in range(max_depth + 1):
+            if depth in folders_by_depth:
+                logger.info(f"    Level {depth}: {len(folders_by_depth[depth])} folders")
+        
+        # Process folders level by level
+        total_folders_processed = 0
+        
+        for depth_level in range(max_depth + 1):
+            if depth_level not in folders_by_depth:
+                continue
+            
+            level_folders = folders_by_depth[depth_level]
+            logger.info(f"\n  Processing level {depth_level}: {len(level_folders)} folders...")
+            
+            # Transform and prepare all folders at this level
+            level_transformed = []
+            level_paths = []  # Store (full_path, mongo_id) for later ID lookup
+            
+            for folder_doc in level_folders:
+                # Transform folder
+                transformed = self.transformer.transform(folder_doc, 'docs', 'postgres')
+                if not transformed:
+                    continue
+                
+                # Resolve parent folder ID from onFolder path
+                on_folder_path = folder_doc.get('onFolder', '/')
+                parent_id = path_to_id_map.get(on_folder_path, 0)
+                transformed['onFolder'] = parent_id
+                
+                # Build full path for this folder
+                folder_name = folder_doc.get('name') or folder_doc.get('title', '')
+                if on_folder_path == '/':
+                    full_path = f'/{folder_name}'
+                else:
+                    full_path = f'{on_folder_path}/{folder_name}'
+                
+                # Check if this folder has a special role
+                if '_special_role_id' in transformed:
+                    special_role_id = transformed['_special_role_id']
+                    mongo_id = transformed['mongo_id']
+                    folder_roles_relations.append((mongo_id, special_role_id))
+                    # Remove internal field before saving
+                    transformed.pop('_special_role_id')
+                
+                level_transformed.append(transformed)
+                level_paths.append((full_path, transformed['mongo_id']))
+            
+            # Load all folders at this level in batch
+            if level_transformed and not self.dry_run:
+                loaded = self.postgres_loader.load_batch(level_transformed, 'docs')
+                logger.info(f"    Loaded: {loaded}/{len(level_transformed)} folders")
+                
+                # Now query back the IDs for all folders in this level (single query)
+                if loaded > 0:
+                    from sqlalchemy import text
+                    mongo_ids = [mongo_id for _, mongo_id in level_paths]
+                    path_by_mongo = {mongo_id: full_path for full_path, mongo_id in level_paths}
+                    
+                    with self.db_manager.postgres.get_session() as session:
+                        # Single query to get all IDs at once
+                        placeholders = ','.join([f':id{i}' for i in range(len(mongo_ids))])
+                        query = text(f'SELECT id, mongo_id FROM docs WHERE mongo_id IN ({placeholders})')
+                        params = {f'id{i}': mid for i, mid in enumerate(mongo_ids)}
+                        result = session.execute(query, params)
+                        
+                        for row in result:
+                            postgres_id, mongo_id = row
+                            full_path = path_by_mongo[mongo_id]
+                            path_to_id_map[full_path] = postgres_id
+                    
+                    logger.info(f"    Mapped {len(path_to_id_map) - 1} folder paths to IDs")  # -1 for root
+            else:
+                # In dry run, use fake IDs
+                for idx, (full_path, mongo_id) in enumerate(level_paths):
+                    path_to_id_map[full_path] = 1000 + total_folders_processed + idx
+            
+            folder_records.extend(level_transformed)
+            total_folders_processed += len(level_transformed)
+        
+        metrics.records_transformed += len(folder_records)
+        metrics.records_loaded_postgres += len(folder_records)
+        logger.info(f"✓ Phase 1 complete: {len(folder_records)} folders migrated")
+        
+        # Phase 2: Migrate files
+        logger.info("\nPhase 2: Migrating files...")
+        file_records = []
+        skipped_files = 0
+        unmapped_folders = set()
+        docs_roles_relations = []  # Store (mongo_id, role_id) for docs_roles table
+        
+        for idx, file_doc in enumerate(files, 1):
+            # Transform file
+            transformed = self.transformer.transform(file_doc, 'docs', 'postgres')
+            if not transformed:
+                skipped_files += 1
+                continue
+            
+            # Resolve folder ID from onFolder path
+            on_folder_path = file_doc.get('onFolder', '/')
+            
+            # Handle edge cases in paths
+            if not on_folder_path or on_folder_path == '':
+                on_folder_path = '/'
+            
+            folder_id = path_to_id_map.get(on_folder_path)
+            
+            if folder_id is None:
+                # Folder path not found in map - file references non-existent or unmigrated folder
+                folder_id = 0  # Default to root
+                unmapped_folders.add(on_folder_path)
+                if len(unmapped_folders) <= 10:  # Log first 10 only
+                    logger.warning(f"  Folder path not found: '{on_folder_path}' (defaulting to root)")
+            
+            transformed['onFolder'] = folder_id
+            
+            # Check if this doc has a special role
+            if '_special_role_id' in transformed:
+                special_role_id = transformed['_special_role_id']
+                mongo_id = transformed['mongo_id']
+                docs_roles_relations.append((mongo_id, special_role_id))
+                # Remove internal field before saving
+                transformed.pop('_special_role_id')
+            
+            file_records.append(transformed)
+            
+            if idx % 500 == 0:
+                logger.info(f"  Progress: {idx}/{len(files)} files transformed")
+        
+        logger.info(f"  Files transformed: {len(file_records)}")
+        if skipped_files > 0:
+            logger.info(f"  Files skipped (inactive): {skipped_files}")
+        if unmapped_folders:
+            logger.warning(f"  Files with unmapped folder paths: {len(unmapped_folders)} unique paths (set to root)")
+        
+        # Load files in batches
+        if file_records and not self.dry_run:
+            logger.info(f"  Loading {len(file_records)} files to PostgreSQL...")
+            batch_size = settings.BATCH_SIZE
+            for i in range(0, len(file_records), batch_size):
+                batch = file_records[i:i + batch_size]
+                loaded = self.postgres_loader.load_batch(batch, 'docs')
+                metrics.records_loaded_postgres += loaded
+                if (i + loaded) % 1000 == 0 or i + loaded == len(file_records):
+                    logger.info(f"    Loaded: {i + loaded}/{len(file_records)}")
+        else:
+            metrics.records_loaded_postgres += len(file_records)
+        
+        metrics.records_transformed += len(file_records)
+        
+        logger.info(f"✓ Phase 2 complete: {len(file_records)} files migrated")
+        
+        # Phase 3: Insert docs_roles relations
+        all_docs_roles = folder_roles_relations + docs_roles_relations
+        
+        if all_docs_roles and not self.dry_run:
+            logger.info(f"\nPhase 3: Inserting docs_roles relations...")
+            logger.info(f"  Found {len(all_docs_roles)} docs with specialRole")
+            
+            docs_roles_records = []
+            for mongo_id, role_id in all_docs_roles:
+                # Get docs_id from PostgreSQL using mongo_id
+                docs_id = self.postgres_id_mapper.get_postgres_id('docs', mongo_id)
+                if docs_id:
+                    docs_roles_records.append({
+                        'docs_id': docs_id,
+                        'role_id': role_id
+                    })
+                else:
+                    logger.warning(f"Could not find docs_id for mongo_id: {mongo_id}")
+            
+            if docs_roles_records:
+                # Load to docs_roles table
+                loaded = self.postgres_loader.load_batch(docs_roles_records, 'docs_roles')
+                logger.info(f"  ✓ Inserted {loaded}/{len(docs_roles_records)} docs_roles relations")
+            else:
+                logger.info(f"  No valid docs_roles relations to insert")
+        elif all_docs_roles:
+            logger.info(f"\nDRY RUN: Would insert {len(all_docs_roles)} docs_roles relations")
+        
+        metrics.finish()
+        
+        logger.info(f"\n✓ Docs migration completed:")
+        logger.info(f"  Total extracted: {metrics.records_extracted:,}")
+        logger.info(f"  Folders migrated: {len(folder_records):,}")
+        logger.info(f"  Files migrated: {len(file_records):,}")
+        logger.info(f"  Total loaded: {metrics.records_loaded_postgres:,}")
+        if all_docs_roles:
+            logger.info(f"  Docs with specialRole: {len(all_docs_roles):,}")
+        logger.info(f"  Duration: {metrics.duration_seconds:.2f}s")
+        
+        return metrics
     
     def _process_many_to_many(self, entity_name: str, metrics: EntityMetrics) -> EntityMetrics:
         """

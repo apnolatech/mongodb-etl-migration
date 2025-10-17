@@ -199,7 +199,8 @@ class Settings:
             'mongo': 'docs',
             'postgres': 'docs',
             'strategy': 'postgres_only',
-            'order': 9  # After users (for uploaded_by_id)
+            'order': 9,  # After users (for uploaded_by_id)
+            'is_hierarchical': True  # Special 2-phase migration for folder structure
         },
         
         # Step 6: Lives (after channel and users)

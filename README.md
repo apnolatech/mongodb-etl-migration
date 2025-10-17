@@ -415,7 +415,7 @@ tail -f etl/logs/etl_*.log | grep ERROR
 # View metrics
 cat etl/logs/etl_metrics_*.json | python -m json.tool
 
-# Count records
+# Validate migration
 python scripts/validate_migration.py
 ```
 
