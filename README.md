@@ -27,8 +27,7 @@ source venv/bin/activate
 pip install -r requirements.txt
 
 # 4. Configure environment
-cp .env.example .env
-# Edit .env with your database credentials
+# Create .env file with your database credentials
 
 # 5. Run migration
 python run_etl.py
@@ -48,20 +47,11 @@ mongodb-etl-migration/
 │
 ├── scripts/               # Utility scripts
 │   ├── truncate_all_tables.py    # Clean databases
-│   ├── validate_migration.py    # Validate results
-│   └── update_tables.sh         # Update Cassandra schema
+│   └── validate_migration.py     # Validate results
 │
 ├── backups/               # Database schemas and backups
 │   └── create_scylla_database.cql
 │
-├── docs/                  # Documentation
-│   ├── SETUP.md          # Installation guide
-│   ├── USAGE.md          # Usage guide
-│   ├── PROJECT_STRUCTURE.md  # Architecture details
-│   ├── API.md            # API reference
-│   └── MIGRATION_REPORT.md   # Migration results
-│
-├── .env.example          # Environment template
 ├── requirements.txt      # Python dependencies
 └── run_etl.py           # Main entry point
 ```
@@ -344,18 +334,6 @@ pytest tests/test_transformers.py
 **Issue:** ObjectId errors  
 **Solution:** Already handled! Triple-layer conversion system
 
-See [USAGE.md](./docs/USAGE.md#troubleshooting-common-issues) for more details.
-
-## Documentation
-
-Complete documentation available in `docs/`:
-
-- **[SETUP.md](./docs/SETUP.md)** - Installation and configuration
-- **[USAGE.md](./docs/USAGE.md)** - How to run and manage migrations
-- **[PROJECT_STRUCTURE.md](./docs/PROJECT_STRUCTURE.md)** - Architecture overview
-- **[API.md](./docs/API.md)** - Technical API reference
-- **[MIGRATION_REPORT.md](./docs/MIGRATION_REPORT.md)** - Latest results
-
 ## Dependencies
 
 Key dependencies (see `requirements.txt` for full list):
@@ -515,15 +493,6 @@ rm -f etl/logs/*.log etl/logs/*.json
 ## License
 
 Private project - All rights reserved by Venqis-NolaTech
-
-## Support
-
-For detailed documentation, see:
-- Installation: `docs/SETUP.md`
-- Usage: `docs/USAGE.md`
-- Architecture: `docs/PROJECT_STRUCTURE.md`
-- API: `docs/API.md`
-- Latest Results: `docs/MIGRATION_REPORT.md`
 
 ## Authors
 
