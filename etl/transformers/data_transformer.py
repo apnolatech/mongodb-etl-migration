@@ -228,7 +228,12 @@ class DataTransformer(BaseTransformer):
             phone = data.get(phone_field)
             if phone:
                 # Remove non-numeric characters
-                data[phone_field] = ''.join(filter(str.isdigit, str(phone)))
+                phone_digits = ''.join(filter(str.isdigit, str(phone)))
+                # For Cassandra, add '+' prefix; for PostgreSQL, keep digits only
+                if destination == 'cassandra':
+                    data[phone_field] = '+' + phone_digits if phone_digits else ''
+                else:
+                    data[phone_field] = phone_digits
         
         # Format DNI with V-00000000 format (with dash between letter and numbers)
         if data.get('dni') or data.get('cedula'):
@@ -327,7 +332,16 @@ class DataTransformer(BaseTransformer):
         - Truncate very long content
         - Decrypt old encryption and re-encrypt with new system
         - Handle fileURL field (decrypt, replace bucket URL, handle mimeType)
+        - Filter deleted messages (isActive=false or isDeleted=true) for Cassandra
         """
+        
+        # For Cassandra, filter out deleted messages
+        if destination == 'cassandra':
+            is_active = data.get('isActive', True)
+            is_deleted = data.get('isDeleted', False)
+            if not is_active or is_deleted:
+                logger.debug(f"Skipping deleted message (isActive={is_active}, isDeleted={is_deleted})")
+                return None
         
         # Ensure content is not None
         if data.get('content') is None:
@@ -512,22 +526,44 @@ class DataTransformer(BaseTransformer):
         elif room_type not in valid_types:
             data['type'] = 'p2p'
         
-        # Set default permissions based on room type (migration_impl.go lines 1143-1162)
-        if room_type == 'p2p':
-            data['send_message'] = True
-            data['add_member'] = True
-            data['edit_group'] = True
-        else:  # group
+        # Set default permissions based on room type
+        # Default values
+        send_message = False
+        add_member = True
+        edit_group = False
+        join_all_user = False
+        
+        is_group = data.get('is_group') or data.get('isGroup')
+        
+        if is_group:
+            # For groups
+            permissions = data.get('permissions')
             can_write = data.get('canWrite', True)
-            permissions = data.get('permissions', {})
             
-            if isinstance(permissions, dict):
-                data['send_message'] = permissions.get('canSendMessage', can_write)
+            if permissions and isinstance(permissions, dict):
+                can_send_message = permissions.get('canSendMessage')
+                if can_send_message is not None:
+                    send_message = can_send_message
+                else:
+                    send_message = can_write
             else:
-                data['send_message'] = can_write
+                send_message = can_write
             
-            data['add_member'] = False
-            data['edit_group'] = False
+            room_type = 'group'
+        else:
+            # For p2p
+            send_message = True
+            add_member = False
+            edit_group = True
+            room_type = 'p2p'
+        
+        # Apply permissions
+        data['send_message'] = send_message
+        data['add_member'] = add_member
+        data['edit_group'] = edit_group
+        data['type'] = room_type
+        
+        # join_all_user is handled separately (from isPublic field in field_mapper)
         
         # member_count is not used in Cassandra room_details
         # Omitted to avoid unknown column error

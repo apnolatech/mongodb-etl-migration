@@ -445,8 +445,8 @@ class ETLOrchestrator:
             #                           lambda x: (x['user_id'], x['room_id']))
             
             self._insert_lookup_table('room_membership_lookup', membership_lookups_to_insert,
-                                      "INSERT INTO room_membership_lookup (user_id, room_id, role) VALUES (?, ?, ?)",
-                                      lambda x: (x['user_id'], x['room_id'], x['role']))
+                                      "INSERT INTO room_membership_lookup (user_id, room_id, role, last_message_at, is_pinned) VALUES (?, ?, ?, ?, ?)",
+                                      lambda x: (x['user_id'], x['room_id'], x['role'], x.get('last_message_at'), False))
     
     def _process_dual(self, entity_name: str, extracted_data: list, metrics: EntityMetrics):
         """Processes entity for PostgreSQL and/or Cassandra according to target_db"""
@@ -856,6 +856,9 @@ class ETLOrchestrator:
             # Populate rooms_by_user (requires room_details, messages_by_room, and participants_by_room)
             self._populate_rooms_by_user()
             
+            # Update room_membership_lookup with last_message_at from rooms_by_user
+            self._update_room_membership_lookup_last_message()
+            
         except Exception as e:
             logger.error(f"Error in post-migration phase: {e}")
             # Don't fail the entire migration, just log the error
@@ -1139,6 +1142,70 @@ class ETLOrchestrator:
         except Exception as e:
             logger.error(f"Error populating rooms_by_user: {e}")
             raise
+    
+    def _update_room_membership_lookup_last_message(self):
+        """
+        Updates room_membership_lookup table with last_message_at values from rooms_by_user
+        This is done after rooms_by_user is populated to ensure last_message_at is accurate
+        """
+        logger.info("\nUpdating room_membership_lookup with last_message_at values...")
+        
+        try:
+            from cassandra.concurrent import execute_concurrent_with_args
+            
+            # Get all entries from rooms_by_user to extract last_message_at
+            query = "SELECT user_id, room_id, last_message_at, is_pinned FROM rooms_by_user"
+            rooms_by_user_data = list(self.cassandra_loader.connection.session.execute(query))
+            
+            if not rooms_by_user_data:
+                logger.info("  No rooms_by_user entries found, skipping update")
+                return
+            
+            logger.info(f"  Found {len(rooms_by_user_data):,} rooms_by_user entries")
+            
+            # Prepare UPDATE query for room_membership_lookup
+            # Note: We need to UPDATE because the records already exist
+            update_query = """
+            UPDATE room_membership_lookup 
+            SET last_message_at = ?, is_pinned = ? 
+            WHERE user_id = ? AND room_id = ?
+            """
+            prepared = self.cassandra_loader.connection.session.prepare(update_query)
+            
+            # Build all updates
+            all_updates = []
+            for entry in rooms_by_user_data:
+                # Values: (last_message_at, is_pinned, user_id, room_id)
+                all_updates.append((
+                    entry.last_message_at,
+                    entry.is_pinned,
+                    entry.user_id,
+                    entry.room_id
+                ))
+            
+            logger.info(f"  Executing {len(all_updates):,} updates concurrently...")
+            
+            # Execute all updates concurrently
+            results = execute_concurrent_with_args(
+                self.cassandra_loader.connection.session,
+                prepared,
+                all_updates,
+                concurrency=200,
+                raise_on_first_error=False
+            )
+            
+            # Count successes and errors
+            success_count = sum(1 for success, _ in results if success)
+            error_count = sum(1 for success, _ in results if not success)
+            
+            logger.info(f"  ✓ room_membership_lookup updated: {success_count:,}/{len(all_updates):,} records")
+            if error_count > 0:
+                logger.warning(f"  ⚠ Errors: {error_count:,}")
+            
+        except Exception as e:
+            logger.error(f"Error updating room_membership_lookup: {e}")
+            # Don't raise - this is not critical enough to fail the migration
+            logger.warning("Continuing migration despite room_membership_lookup update errors")
     
     def cleanup(self):
         """Cleans up resources and closes connections"""
